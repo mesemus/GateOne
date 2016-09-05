@@ -99,10 +99,19 @@ Module Functions and Classes
 import os, sys, time, struct, io, gzip, re, logging, signal
 from datetime import timedelta, datetime
 from functools import partial
-from itertools import izip
+try:
+    from itertools import izip, imap
+except:
+    izip = zip
+    imap = map
 from concurrent.futures import ProcessPoolExecutor
 from json import loads as json_decode
 from json import dumps as json_encode
+
+try:
+    unicode_string = unicode
+except:
+    unicode_string = str
 
 # Inernationalization support
 _ = str # So pylint doesn't show a zillion errors about a missing _() function
@@ -1198,19 +1207,27 @@ class MultiplexPOSIXIOLoop(BaseMultiplex):
     .. note:: `MultiplexPOSIXIOLoop.read` is non-blocking.
     """
     def __init__(self, *args, **kwargs):
+        if 'io_loop_provider' in kwargs:
+            loop_provider = kwargs.pop('io_loop_provider')
+            io_loop = loop_provider.io_loop
+            periodic_callback = loop_provider.register_periodic_callback
+        else:
+            from tornado import ioloop
+            io_loop = ioloop.IOLoop.current() # Monitors child for activity
+            periodic_callback = ioloop.PeriodicCallback
+
         super(MultiplexPOSIXIOLoop, self).__init__(*args, **kwargs)
-        from tornado import ioloop
         self.terminating = False
         self.sent_sigint = False
         self.shell_command = ['/bin/sh', '-c']
         self.use_shell = True # Controls whether or not we wrap with the above
         self.env = {}
-        self.io_loop = ioloop.IOLoop.current() # Monitors child for activity
+        self.io_loop = io_loop
         #self.io_loop.set_blocking_signal_threshold(2, self._blocked_io_handler)
         #signal.signal(signal.SIGALRM, self._blocked_io_handler)
         self.reenable_timeout = None
         interval = 100 # A 0.1 second interval should be fast enough
-        self.scheduler = ioloop.PeriodicCallback(self._timeout_checker,interval)
+        self.scheduler = periodic_callback(self._timeout_checker,interval)
         self.exitstatus = None
         self._checking_patterns = False
         self.read_timeout = datetime.now()
@@ -1282,7 +1299,7 @@ class MultiplexPOSIXIOLoop(BaseMultiplex):
             timedelta(milliseconds=wait), self._reenable_output)
 
     def spawn(self,
-            rows=24, cols=80, env=None, em_dimensions=None, exitfunc=None):
+            rows=24, cols=80, env=None, em_dimensions=None, exitfunc=None, default_term="xterm-256color"):
         """
         Creates a new virtual terminal (tty) and executes self.cmd within it.
         Also attaches :meth:`self._ioloop_read_handler` to the IOLoop so that
@@ -1318,7 +1335,7 @@ class MultiplexPOSIXIOLoop(BaseMultiplex):
                 env = {}
             env["COLUMNS"] = str(cols)
             env["LINES"] = str(rows)
-            env["TERM"] = env.get("TERM", "xterm-256color")
+            env["TERM"] = env.get("TERM", default_term)
             env["PATH"] = os.environ['PATH']
             env["LANG"] = os.environ.get('LANG', 'en_US.UTF-8')
             env["PYTHONIOENCODING"] = "utf_8"
@@ -1360,8 +1377,9 @@ class MultiplexPOSIXIOLoop(BaseMultiplex):
                 cmd = self.shell_command + [self.cmd + '; sleep .1']
             # This loop prevents UnicodeEncodeError exceptions:
             for k, v in env.items():
-                if isinstance(v, unicode):
+                if isinstance(v, unicode_string):
                     env[k] = v.encode('utf-8')
+
             os.dup2(stderr, stdout) # Copy stderr to stdout (equivalent to 2>&1)
             os.execvpe(cmd[0], cmd, env)
             os._exit(0)
@@ -1396,8 +1414,13 @@ class MultiplexPOSIXIOLoop(BaseMultiplex):
             self.shared_scrollback = []
             # Set non-blocking so we don't wait forever for a read()
             import fcntl
-            fl = fcntl.fcntl(sys.stdin, fcntl.F_GETFL)
-            fcntl.fcntl(self.fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
+            try:
+                fl = fcntl.fcntl(sys.stdin, fcntl.F_GETFL)
+                fcntl.fcntl(self.fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
+            except:
+                fl = fcntl.fcntl(self.fd, fcntl.F_GETFL)
+                fcntl.fcntl(self.fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
+
             # Set the size of the terminal
             resize = partial(self.resize, rows, cols, ctrl_l=False)
             self.io_loop.add_timeout(timedelta(milliseconds=100), resize)

@@ -152,7 +152,11 @@ from array import array
 from datetime import datetime, timedelta
 from functools import partial
 from collections import defaultdict
-from itertools import imap, izip
+try:
+    from itertools import imap, izip
+except:
+    imap = map
+    izip = zip
 try:
     from collections import OrderedDict
 except ImportError: # Python <2.7 didn't have OrderedDict in collections
@@ -2121,7 +2125,7 @@ class Terminal(object):
         # Used for mapping unicode chars to acutal renditions (to save memory):
         self.renditions_store = {
             u' ': [], # Nada, nothing, no rendition.  Not the same as below
-            self.rend_counter.next(): [0] # Default is actually reset
+            next(self.rend_counter): [0] # Default is actually reset
         }
         self.watcher = None # Placeholder for the file watcher thread (if used)
 
@@ -3176,7 +3180,7 @@ class Terminal(object):
         `self.matched_header`) and stores the result in `self.captured_files`
         and creates a reference to that location at the current cursor location.
         """
-        ref = self.file_counter.next()
+        ref = next(self.file_counter)
         logging.debug("_filetype_instance(%s)" % repr(ref))
         # Before doing anything else we need to mark the current cursor
         # location as belonging to our file
@@ -4034,7 +4038,7 @@ class Terminal(object):
             # previous rendition...
             reduced = _reduce_renditions(out_renditions)
             if reduced not in self.renditions_store.values():
-                new_ref_point = self.rend_counter.next()
+                new_ref_point = next(self.rend_counter)
                 self.renditions_store.update({new_ref_point: reduced})
                 self.cur_rendition = new_ref_point
             else: # Find the right reference point to use
@@ -4046,7 +4050,7 @@ class Terminal(object):
         cur_rendition_list = self.renditions_store[self.cur_rendition]
         reduced = _reduce_renditions(cur_rendition_list + new_renditions)
         if reduced not in self.renditions_store.values():
-            new_ref_point = self.rend_counter.next()
+            new_ref_point = next(self.rend_counter)
             self.renditions_store.update({new_ref_point: reduced})
             self.cur_rendition = new_ref_point
         else: # Find the right reference point to use
